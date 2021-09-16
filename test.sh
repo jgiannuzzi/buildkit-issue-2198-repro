@@ -11,15 +11,23 @@ title() {
 }
 
 start_registry() {
-  title "Start local registry"
-  registry=$(docker run -d -p 5000:5000 --restart always registry:2)
+  title "Start local registry for caching"
+  registry_cache=$(docker run -d registry:2)
+  title "Start local registry for mirroring"
+  registry_mirror=$(docker run -d -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io registry:2)
 }
 
 stop_registry() {
-  if [ -n "$registry" ]
+  if [ -n "$registry_cache" ]
   then
-    title "Stop local registry"
-    docker rm -vf $registry
+    title "Stop local registry for caching"
+    docker rm -vf $registry_cache
+  fi
+
+  if [ -n "$registry_mirror" ]
+  then
+    title "Stop local registry for mirroring"
+    docker rm -vf $registry_mirror
   fi
 }
 
@@ -49,7 +57,8 @@ build() {
     -v $volume:/home/user/.local/share/buildkit \
     -v $PWD:/tmp/work \
     -w /tmp/work \
-    --link $registry:registry \
+    --link $registry_cache:registry-cache \
+    --link $registry_mirror:registry-mirror \
     -e BUILDKITD_FLAGS='--oci-worker-no-process-sandbox --config ./config.toml' \
     --security-opt seccomp=unconfined \
     --security-opt apparmor=unconfined \
@@ -67,15 +76,10 @@ trap cleanup EXIT
 
 start_registry
 
-title "Add alpine:latest image to registry"
-docker pull alpine:latest
-docker tag alpine:latest localhost:5000/library/alpine:latest
-docker push localhost:5000/library/alpine:latest
-
 create_volume
 
 title "Create registry cache"
-build --export-cache type=registry,mode=max,ref=registry:5000/repro:buildcache
+build --export-cache type=registry,mode=max,ref=registry-cache:5000/repro:buildcache
 
 for i in $(seq $RETRIES)
 do
@@ -85,7 +89,7 @@ do
   fi
 
   title "Use registry cache to output tar image (try $i/$RETRIES)"
-  build --import-cache type=registry,ref=registry:5000/repro:buildcache --output type=tar,dest=./image.tar
+  build --import-cache type=registry,ref=registry-cache:5000/repro:buildcache --output type=tar,dest=./image.tar
 
   if !(tar tf image.tar | grep -q repro.txt)
   then

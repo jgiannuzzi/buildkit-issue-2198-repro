@@ -1,7 +1,10 @@
-[registry."registry:5000"]
+[registry."registry-cache:5000"]
+    http = true
+    insecure = true
+[registry."registry-mirror:5000"]
     http = true
     insecure = true
 [registry."docker.io"]
     http = true
     insecure = true
-    mirrors = ["registry:5000"]
+    mirrors = ["registry-mirror:5000"]
