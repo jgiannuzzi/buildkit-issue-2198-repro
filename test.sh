@@ -7,7 +7,15 @@ RETRIES=${RETRIES:-20}
 CACHE_RESET_FREQ=${CACHE_RESET_FREQ:-4}
 
 title() {
-  echo $'\e[1;33m'$@$'\e[0m'
+  echo $'\e[1m'$@$'\e[0m'
+}
+
+error() {
+  echo $'\e[1;31m'$@$'\e[0m'
+}
+
+success() {
+  echo $'\e[1;32m'$@$'\e[0m'
 }
 
 start_registry() {
@@ -93,9 +101,10 @@ do
 
   if !(tar tf image.tar | grep -q repro.txt)
   then
-    title "Failed after $i tries"
+    error "Detected missing layer in tar image!"
+    error "Failed after $i tries"
     exit 1
   fi
 done
 
-title "Succeeded $i times - looks good"
+success "Succeeded $i times - looks good"
