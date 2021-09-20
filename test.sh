@@ -19,8 +19,12 @@ success() {
 }
 
 start_registry() {
-  title "Start local registry for caching"
-  registry_cache=$(docker run -d registry:2)
+  if [ -z "$USE_LOCAL_CACHE" ]
+  then
+    title "Start local registry for caching"
+    registry_cache=$(docker run -d registry:2)
+  fi
+
   title "Start local registry for mirroring"
   registry_mirror=$(docker run -d -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io registry:2)
 }
@@ -40,7 +44,6 @@ stop_registry() {
 }
 
 create_volume() {
-  delete_volume
   title "Create buildkit cache volume"
   volume=$(docker volume create)
 }
@@ -53,24 +56,40 @@ delete_volume() {
   fi
 }
 
+delete_image() {
+  if [ -f "image.tar" ]
+  then
+    title "Delete tar image"
+    rm image.tar
+  fi
+}
+
 cleanup() {
-  delete_volume
-  stop_registry
+  if [ -z "$NO_CLEANUP" ]
+  then
+    delete_image
+    delete_volume
+    stop_registry
+  fi
 }
 
 build() {
+  links="--link $registry_mirror:registry-mirror"
+  if [ -n "$registry_cache" ]
+  then
+    links="$links --link $registry_cache:registry-cache"
+  fi
   docker run \
     --rm \
     -ti \
     -v $volume:/home/user/.local/share/buildkit \
     -v $PWD:/tmp/work \
     -w /tmp/work \
-    --link $registry_cache:registry-cache \
-    --link $registry_mirror:registry-mirror \
     -e BUILDKITD_FLAGS='--oci-worker-no-process-sandbox --config ./config.toml' \
     --security-opt seccomp=unconfined \
     --security-opt apparmor=unconfined \
     --entrypoint buildctl-daemonless.sh \
+    $links \
     $BUILDKIT_IMAGE \
     build \
     --frontend dockerfile.v0 \
@@ -80,24 +99,40 @@ build() {
     $@
 }
 
+create_cache() {
+  if [ -z "$USE_LOCAL_CACHE" ]
+  then
+    export_cache="type=registry,mode=max,ref=registry-cache:5000/repro:buildcache"
+    import_cache="type=registry,ref=registry-cache:5000/repro:buildcache"
+    cache_type="registry"
+  else
+    export_cache="type=local,mode=max,dest=./buildcache"
+    import_cache="type=local,src=./buildcache"
+    cache_type="local"
+  fi
+
+  title "Create $cache_type cache"
+  build --export-cache $export_cache
+}
+
 trap cleanup EXIT
 
 start_registry
 
 create_volume
 
-title "Create registry cache"
-build --export-cache type=registry,mode=max,ref=registry-cache:5000/repro:buildcache
+create_cache
 
 for i in $(seq $RETRIES)
 do
   if [ $(( $i % 4 )) -eq 1 ]
   then
+    delete_volume
     create_volume
   fi
 
-  title "Use registry cache to output tar image (try $i/$RETRIES)"
-  build --import-cache type=registry,ref=registry-cache:5000/repro:buildcache --output type=tar,dest=./image.tar
+  title "Use imported $cache_type cache to output tar image (try $i/$RETRIES)"
+  build --import-cache $import_cache --output type=tar,dest=./image.tar
 
   if !(tar tf image.tar | grep -q repro.txt)
   then
