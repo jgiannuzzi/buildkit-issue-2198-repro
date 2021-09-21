@@ -120,8 +120,11 @@ create_cache() {
     cache_type="local"
   fi
 
-  title "Create $cache_type cache"
-  build --export-cache $export_cache
+  if [ -z "$SKIP_CREATE_CACHE" ]
+  then
+    title "Create $cache_type cache"
+    build --export-cache $export_cache
+  fi
 }
 
 trap cleanup EXIT
@@ -132,23 +135,26 @@ create_volume
 
 create_cache
 
-for i in $(seq $RETRIES)
-do
-  if [ $(( $i % 4 )) -eq 1 ]
-  then
-    delete_volume
-    create_volume
-  fi
+if [ -z "$SKIP_TESTS" ]
+then
+  for i in $(seq $RETRIES)
+  do
+    if [ $(( $i % 4 )) -eq 1 ]
+    then
+      delete_volume
+      create_volume
+    fi
 
-  title "Use imported $cache_type cache to output tar image (try $i/$RETRIES)"
-  build --import-cache $import_cache --output type=tar,dest=./image.tar
+    title "Use imported $cache_type cache to output tar image (try $i/$RETRIES)"
+    build --import-cache $import_cache --output type=tar,dest=./image.tar
 
-  if !(tar tf image.tar | grep -q repro.txt)
-  then
-    error "Detected missing layer in tar image!"
-    error "Failed after $i tries"
-    exit 1
-  fi
-done
+    if !(tar tf image.tar | grep -q repro.txt)
+    then
+      error "Detected missing layer in tar image!"
+      error "Failed after $i tries"
+      exit 1
+    fi
+  done
 
-success "Succeeded $i times - looks good"
+  success "Succeeded $i times - looks good"
+fi

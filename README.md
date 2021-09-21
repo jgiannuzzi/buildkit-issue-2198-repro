@@ -27,6 +27,8 @@ A few environment variables can be used to tweak the script's behaviour:
 - `CACHE_RESET_FREQ` controls the `buildkitd` cache reset frequency. It defaults to every 4 tries.
 - `NO_CLEANUP` can be set to any value to prevent the script from cleaning up anything when it exits.
 - `USE_LOCAL_CACHE` can be set to any value to make the script export the cache in a local directory instead of a registry.
+- `SKIP_CREATE_CACHE` can be used to skip the cache creation step.
+- `SKIP_TESTS` can be used to skip the tests altogether.
 
 ## Why is this broken?
 
@@ -57,3 +59,17 @@ During a second run with the same cache, but this time with a partially populate
 During the result filtering, results originating from both caches could be walked, and the result for `RUN echo 1` could end up being returned as the first element of the list, instead of the one for `COPY repro.txt /` or `RUN echo 2`.
 
 Unfortunately, [`solver.(*combinedCacheManager).Load`](https://github.com/moby/buildkit/blob/v0.9.0/solver/combinedcache.go#L70) assumes that the first result is the parent and will return that one, which eventually results in an image missing a layer!
+
+## Note on previous releases of Buildkit
+
+This bug can also happen on previous releases of Buildkit if the imported cache has been created with v0.8.0 or higher.
+
+Here is how to reproduce on v0.7.2 for example:
+
+```sh
+# Create a local cache with v0.9.0
+USE_LOCAL_CACHE=1 NO_CLEANUP=1 SKIP_TESTS=1 ./test.sh
+
+# Test this cache with v0.7.2
+USE_LOCAL_CACHE=1 NO_CLEANUP=1 SKIP_CREATE_CACHE=1 BUILDKIT_IMAGE=moby/buildkit:v0.7.2-rootless ./test.sh
+```
