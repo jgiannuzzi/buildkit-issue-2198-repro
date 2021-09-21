@@ -64,11 +64,20 @@ delete_image() {
   fi
 }
 
+delete_cache() {
+  if [ "$cache_type" == "local" ] && [ -d "buildcache" ]
+  then
+    title "Delete local cache"
+    rm -rf buildcache
+  fi
+}
+
 cleanup() {
   if [ -z "$NO_CLEANUP" ]
   then
     delete_image
     delete_volume
+    delete_cache
     stop_registry
   fi
 }
