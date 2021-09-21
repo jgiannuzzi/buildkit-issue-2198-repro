@@ -28,3 +28,32 @@ A few environment variables can be used to tweak the script's behaviour:
 - `NO_CLEANUP` can be set to any value to prevent the script from cleaning up anything when it exits.
 - `USE_LOCAL_CACHE` can be set to any value to make the script export the cache in a local directory instead of a registry.
 
+## Why is this broken?
+
+Let's take a look at the `Dockerfile` provided in this repository:
+```Dockerfile
+FROM alpine:latest
+
+# create a layer (empty or not)
+RUN echo 1
+
+# create a layer that also depends on the context
+COPY repro.txt /
+
+# create an empty layer
+RUN echo 2
+```
+
+When importing the cache of a run that has empty layers removed, some vertexes will point to the same result, e.g. `COPY repro.txt /` and `RUN echo 2`.
+
+In [`cache.remotecache.v1.(*cacheResultStorage).LoadWithParents`](https://github.com/moby/buildkit/blob/v0.9.0/cache/remotecache/v1/cachestorage.go#L216), we try to load a cache result with its parents. We start by looking up the corresponding item in a map, and because there are 2 possible values, it will randomly return one or the other.
+
+If the 'wrong' item gets used (`COPY repro.txt /` in our example), then only a partial list of results will be loaded. They get returned to [`solver.(*cacheManager).LoadWithParents`](https://github.com/moby/buildkit/blob/v0.9.0/solver/cachemanager.go#L190), which will [filter them](https://github.com/moby/buildkit/blob/v0.9.0/solver/cachemanager.go#L153) and end up with the same partial list of results.
+
+Those will eventually be saved in the `buildkitd` cache in [`solver.(*combinedCacheManager).Load`](https://github.com/moby/buildkit/blob/v0.9.0/solver/combinedcache.go#L70), thus missing the entry for `RUN echo 2`.
+
+During a second run with the same cache, but this time with a partially populated `buildkitd` cache, if the 'wrong' item gets used again in [`cache.remotecache.v1.(*cacheResultStorage).LoadWithParents`](https://github.com/moby/buildkit/blob/v0.9.0/cache/remotecache/v1/cachestorage.go#L216), and the partial list of results is loaded and returned to [`solver.(*cacheManager).LoadWithParents`](https://github.com/moby/buildkit/blob/v0.9.0/solver/cachemanager.go#L190), something different from the previous run might happen.
+
+During the result filtering, results originating from both caches could be walked, and the result for `RUN echo 1` could end up being returned as the first element of the list, instead of the one for `COPY repro.txt /` or `RUN echo 2`.
+
+Unfortunately, [`solver.(*combinedCacheManager).Load`](https://github.com/moby/buildkit/blob/v0.9.0/solver/combinedcache.go#L70) assumes that the first result is the parent and will return that one, which eventually results in an image missing a layer!
